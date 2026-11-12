@@ -1,0 +1,89 @@
+# =====================================================================
+# LncKit pipeline configuration (used by lnckit.py)
+#   Edit this file in your PROJECT folder to override the packaged defaults.
+#   Works for ANY organism (plant or animal).
+# =====================================================================
+
+# Organism - picks per-tool models (CPAT/CNCI/LncFinder). plant | human | mouse |
+# fly | zebrafish | other. 'other' = CPAT is skipped (no model applied).
+organism: other
+
+tools:
+  qc: fastp                  # fastqc | fastp | multiqc  (fastp also does the trimming, below)
+  trim: fastp                # fastp | trimmomatic | cutadapt
+  aligner: hisat2            # hisat2 | star  (splice-aware; NOT bwa/bowtie2 for assembly)
+  assembler: stringtie       # stringtie | cufflinks
+  compare: gffcompare        # reference comparison for novel transcripts
+
+  # How lncRNA CANDIDATES are picked from the assembly. DEFAULT = feelnc:
+  #   feelnc  -> FEELnc_filter.pl (-s length + --monoex + removal of mRNA-overlapping
+  #              transcripts) in ONE step (replaces built-in length/exon/novelty).
+  #   builtin -> gffcompare-novelty + length(>=200) + exon filters.
+  # (feelnc auto-falls back to builtin if the lnckit_feelnc env/annotation is missing.)
+  candidate_filter: feelnc   # feelnc | builtin
+
+  # Coding-potential ENSEMBLE. Combined by coding_potential.consensus (majority by
+  # default). Any tool that can't run (e.g. CPAT without a model, pfam without Pfam-A.hmm)
+  # is skipped and drops out of the vote.
+  coding_potential:          # cpat | cpc2 | cnci | plek | lncfinder | pfam | rnaplonc
+    - cpat
+    - cpc2
+    - cnci
+    - plek
+    - lncfinder
+    - rnaplonc
+    - pfam                   # hmmscan vs Pfam-A.hmm (download: download_databases.sh --pfam)
+  protein_filter: diamond    # diamond | blastx
+  housekeeping: infernal     # infernal (Rfam.cm) | blastn | none
+  classifier: feelnc         # feelnc | gffcompare
+
+# --- Filtering thresholds --------------------------------------------
+filters:
+  min_transcript_length: 200   # keep length >= 200 nt  (FEELnc -s)
+  min_exon_number: 1           # 1 = keep monoexonic (FEELnc --monoex 1); 2 = multi-exon only
+  min_expression_fpkm: 1       # DEFAULT: keep FPKM >= 1  (set to null to use TPM instead)
+  min_expression_tpm: 0.5      # (only used if min_expression_fpkm is null)
+  min_expressed_samples: 1     # ...in at least this many samples (lncRNAs are tissue-specific)
+
+coding_potential:
+  consensus: majority          # majority | all | <N>   how to combine the ensemble vote
+  cpat:
+    # null = auto per-organism cutoff (human 0.364, mouse 0.44, fly 0.39, zebrafish 0.381,
+    # plant 0.46). A NUMBER here forces one cutoff for all organisms. coding_prob < cutoff = lncRNA
+    coding_cutoff: null
+
+protein_homology:
+  evalue: 1.0e-5
+  min_pident: 30               # remove if a protein hit has pident >= 30 AND e <= evalue
+
+# --- Reference files -------------------------------------------------
+# The genome + annotation are NOT bundled - YOU supply them per run, with ANY filename.
+# Recommended: list them in samples.txt as reference rows (a local PATH or a URL):
+#     genome_fasta,/path/to/YourGenome.fasta
+#     annotation_gtf,/path/to/YourGenome.gtf        # a .gff / .gff3 also works
+# A samples.txt reference row overrides the values here; a URL is auto-downloaded.
+reference:
+  genome_fasta:   null                           # YOU provide (any name) - local path or URL
+  annotation_gtf: null                           # YOU provide (any name) - GTF or GFF/GFF3; path or URL
+  protein_db:                                    # protein-homology filter (BLASTX vs ALL three, same params)
+    - databases/uniprot_sprot.fasta
+    - databases/Pfam-A.fasta
+    - databases/cog-20.fa
+  rfam_cm:        databases/Rfam.cm              # ncRNA removal (Infernal)
+  pfam_db:        databases/Pfam-A.hmm           # for the 'pfam' coding backend
+  # Plant CPAT model (when organism: plant) - supply these:
+  # cpat_hexamer: databases/Plant_Hexamer.tsv
+  # cpat_logit:   databases/Plant.logit.RData
+
+# --- Inputs / grouping ----------------------------------------------
+inputs:
+  paired: true
+  strandness: auto             # auto (detect from reads) | RF | FR | null (unstranded)
+  # Pool replicates by group (after trimming). Needs a samples.txt 'group' column, or list:
+  # merge_replicates: true
+  # groups:
+  #   5D_Bold-seeded:  [SRR16122599, SRR16122608, SRR16122607]
+
+resources:
+  threads: 8
+  memory_gb: 32

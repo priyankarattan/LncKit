@@ -1,0 +1,47 @@
+# LncKit Apptainer/Singularity image - every tool baked in. Build once, run anywhere on
+# HPC with NO conda, NO compiling, NO install. Databases + your data are bind-mounted.
+#
+# Build (no root/daemon needed with --fakeroot):
+#     apptainer build --fakeroot lnckit.sif Singularity.def
+#     # or:  singularity build --fakeroot lnckit.sif Singularity.def
+# Run:
+#     apptainer run -B /my/project:/work -B /my/db:/db lnckit.sif /work
+Bootstrap: docker
+From: condaforge/miniforge3:latest
+
+%files
+    . /opt/lnckit
+
+%post
+    set -e
+    apt-get update && apt-get install -y --no-install-recommends \
+        git curl unzip make g++ procps ca-certificates
+    rm -rf /var/lib/apt/lists/*
+    export LNCKIT_HOME=/opt/lnckit_share
+    export PYTHONPATH=/opt/lnckit
+    cd /opt/lnckit
+    # drop anything large/host-specific that may have been copied in
+    rm -rf lnckit_output .git .claude .lnckit_env *.tar.gz \
+           databases/uniprot_sprot.fasta databases/Rfam.cm databases/Rfam.cm.* \
+           databases/Pfam-A.fasta databases/Pfam-A.hmm databases/Pfam-A.hmm.* \
+           databases/cog-20.fa databases/genome.fasta databases/genome.fasta.fai \
+           databases/genome.gtf databases/genome.gff databases/genome.gff3
+    # 1) 3 conda envs + FEELnc libdb fix + LncFinder
+    bash setup.sh
+    # 2) CNCI + PLEK from source
+    source /opt/conda/etc/profile.d/conda.sh && conda activate lnckit
+    python -c "from lnckit.core.installer import execute_plan, plan_install; \
+[print(x) for x in execute_plan(plan_install(['cnci','plek']), yes=True)]"
+    conda clean -afy
+
+%environment
+    export LNCKIT_HOME=/opt/lnckit_share
+    export PYTHONPATH=/opt/lnckit
+    export LNCKIT_DB_DIR=/db
+
+%runscript
+    exec bash /opt/lnckit/lnckit.sh "$@"
+
+%labels
+    Name LncKit
+    Description Organism-agnostic lncRNA identification pipeline
