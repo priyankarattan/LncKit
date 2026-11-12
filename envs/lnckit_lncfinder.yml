@@ -1,0 +1,16 @@
+# Isolated LncFinder environment (dependencies only).
+# LncFinder is CRAN-only - there is NO conda package for it. So this env installs
+# just its heavy dependencies from conda (prebuilt binaries), and setup.sh then runs
+# install.packages("LncFinder") from CRAN into it. Kept apart from the main `lnckit`
+# env so its R + caret stack never perturbs the bioinformatics tools. The lncfinder
+# wrapper auto-discovers this env's Rscript.
+name: lnckit_lncfinder
+channels:
+  - conda-forge
+dependencies:
+  - r-base
+  - r-caret
+  - r-seqinr
+  - r-e1071
+  - r-mass
+  - r-matrix

@@ -1,0 +1,15 @@
+# Isolated FEELnc environment.
+# FEELnc pins an old Perl 5.22 (with its own bundled Bio::SeqFeature modules) and
+# conflicts with EMBOSS, so it lives apart from the main `lnckit` env.
+#
+# NOTE: `conda env create -f` alone is NOT enough - bioconda's feelnc pulls in
+# perl-db-file built against libdb 6.1 while installing libdb 6.2, so FEELnc_classifier
+# dies with a Berkeley DB version mismatch. Run `bash setup.sh` (not this file directly),
+# which creates the env AND applies the one-line libdb compat fix.
+name: lnckit_feelnc
+channels:
+  - conda-forge      # MUST be first (bioconda packages depend on conda-forge)
+  - bioconda
+  - nodefaults
+dependencies:
+  - feelnc

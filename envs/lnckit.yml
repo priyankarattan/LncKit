@@ -1,0 +1,42 @@
+# Main LncKit tool environment.
+# All bioinformatics tools the pipeline shells out to (they run as subprocesses,
+# NOT under LncKit's own Python). Create with:  conda env create -f envs/lnckit.yml
+name: lnckit
+channels:
+  - conda-forge      # MUST be first (bioconda packages depend on conda-forge)
+  - bioconda
+  - nodefaults       # never use the `defaults` channel (avoids strict-priority/ToS solve errors)
+dependencies:
+  # LncKit's own Python + pure-Python deps, so this env can run the wizard itself
+  # (no separate conda "base" python is needed - works under micromamba too).
+  - python>=3.10
+  - pyyaml>=6.0
+  - jinja2>=3.1
+  - packaging>=24.0
+  # bioinformatics tools (run as subprocesses)
+  # NOTE: sra-tools is intentionally NOT here - the bioconda build pins an old htslib
+  # that downgrades samtools in this shared env. setup.sh pre-fetches NCBI's official
+  # static SRA Toolkit tarball instead (see the "SRA Toolkit" step in setup.sh).
+  - cpat
+  # cpc2 is NOT installed from conda - that build ships without working svm-scale/
+  # svm-predict (and mismatched Biopython), so it crashes at run time. LncKit uses the
+  # VENDORED CPC2_standalone (third_party/) built by setup.sh under the lnckit_py2 env.
+  - diamond
+  - fastp
+  - fastqc
+  - gffcompare
+  - gffread
+  - hisat2
+  - hmmer            # hmmscan/hmmpress - Pfam coding-potential backend
+  - openjdk          # Java runtime for Weka (RNAplonc coding-potential backend)
+  - infernal
+  - multiqc
+  # multiqc 1.35 declares boto3 (S3 output) + pyarrow (Parquet) as deps; conda doesn't
+  # pull them, which makes a later `pip install` warn about an unsatisfied requirement.
+  # Install them here so the env is complete and that warning never appears - no manual step.
+  - boto3
+  - pyarrow
+  - samtools>=1.15
+  - stringtie
+  - emboss          # getorf
+  - aria2           # fast multi-connection downloader used by download_databases.sh
