@@ -1,0 +1,223 @@
+# ============================================================================
+# lnckit default configuration
+# Every value here can be overridden by a user YAML/JSON file or CLI flags.
+# ============================================================================
+
+output_dir: lnckit_output
+tmp_dir: null            # null -> <output_dir>/temporary
+
+# Organism the reads come from. LncKit works for ANY organism - this only picks
+# sensible model defaults per tool (e.g. CNCI runs -m pl for plants, -m ve otherwise)
+# and reminds you which retrained CPAT/LncFinder model to supply. Values:
+#   plant | animal | other   (other -> animal-style defaults; override models below)
+organism: other
+
+# --- Inputs -----------------------------------------------------------------
+inputs:
+  reads_dir: null        # directory of FASTQ(.gz) files (skip if using SRA accessions)
+  sra_accessions: null   # list of run accessions, e.g. [SRR16122599, SRR16122600]
+  sra_accession_file: null   # ...or a file with one accession per line
+  samples: null          # optional explicit sample sheet (TSV): sample,fq1,fq2
+  paired: true
+  # Library strandness. DEFAULT = auto: LncKit infers RF/FR/unstranded from the aligned
+  # reads (spliced-read XS tags, RSeQC-style) before assembly. It only commits to RF or FR
+  # on overwhelming evidence from enough reads; otherwise it falls back to unstranded, so it
+  # never mis-strands transcripts. This matters because running genuinely stranded data as
+  # unstranded silently loses antisense + mono-exonic lncRNAs (StringTie can't strand them).
+  # Set a fixed value to skip detection: RF (dUTP first-strand) | FR (second-strand) | null
+  # (unstranded). An explicit value here or via --strandness always wins over auto.
+  strandness: auto       # auto (default) | RF | FR | null (unstranded)
+  merge_replicates: false  # true = pool (cat) all runs sharing a `group` into ONE sample
+                           # per group BEFORE alignment (e.g. all 3d_bold runs -> 3d_bold).
+                           # Needs `groups` (from samples.txt). Maximises assembly depth.
+  groups: null           # {group: [accessions]} - filled from samples.txt automatically
+
+# --- SRA download (pipeline entry point) ------------------------------------
+sra:
+  tool: fastq-dump       # fastq-dump | fasterq-dump (fasterq is multi-threaded)
+  prefetch: true         # fetch the .sra archive first: faster and restartable
+  split: split-3         # split-3 | split-files | concatenate
+                         # split-3 keeps mates in lock-step and puts orphaned reads
+                         # in a separate file; split-files can emit out-of-sync mates
+  gzip: true
+  keep_sra: false        # delete the .sra cache once FASTQ has been written
+  max_size: 100G
+
+reference:
+  genome_fasta: null     # required for indexing/alignment
+  annotation_gtf: null   # reference GTF/GFF (known genes) - used by gffcompare & FEELnc
+  # Shared databases live in $LNCKIT_DB_DIR (lnckit.sh defaults it to the package's
+  # databases/ folder, so they're downloaded once and reused by every project - no
+  # machine path is hardcoded). If the file is missing it auto-downloads from *_url.
+  # protein_db is the diamond-BLASTX homology database(s). It may be a SINGLE path OR a
+  # LIST - a transcript is dropped if it hits ANY listed DB (pident>=min_pident & e<=evalue).
+  # This is how you pick homology databases: UniProt only (default), or add Pfam-A / COG:
+  #   protein_db:
+  #     - ${LNCKIT_DB_DIR}/uniprot_sprot.fasta
+  #     - ${LNCKIT_DB_DIR}/Pfam-A.fasta      # bash download_databases.sh --pfam-fasta
+  #     - ${LNCKIT_DB_DIR}/cog-20.fa         # bash download_databases.sh --cog
+  # Pfam is done here (BLASTX vs Pfam-A sequences), NOT as an hmmscan coding backend.
+  protein_db:     ${LNCKIT_DB_DIR}/uniprot_sprot.fasta   # broad protein DB (UniProt)
+  protein_db_url: https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
+  # Optional: YOUR species' own annotated proteins (e.g. the .pep/.faa from your genome
+  # annotation). The protein-homology filter searches BOTH this and protein_db and drops
+  # a transcript if it matches EITHER. Leave null to use only protein_db (UniProt).
+  genome_protein: null
+  rfam_cm:        ${LNCKIT_DB_DIR}/Rfam.cm               # Infernal housekeeping ncRNA removal
+  rfam_cm_url:    https://ftp.ebi.ac.uk/pub/databases/Rfam/CURRENT/Rfam.cm.gz
+  ncrna_fasta: null      # ncRNA FASTA, if tools.housekeeping = blastn
+  # (Alternative to putting Pfam in protein_db) a separate Pfam-A protein FASTA to BLASTX
+  # against in the homology step - same effect. null = don't use a separate Pfam DB.
+  pfam_protein:   null
+  # CPAT model for YOUR organism (hexamer .tsv + logit .RData). Set both to enable
+  # CPAT. If you add a *_url the file auto-downloads on first run. CPAT ships prebuilt
+  # models for Human / Mouse / Fly / Zebrafish at
+  #   https://github.com/liguowang/cpat/tree/master/prebuilt_models
+  # e.g. for Human:
+  #   cpat_hexamer:     databases/Human_Hexamer.tsv
+  #   cpat_hexamer_url: https://raw.githubusercontent.com/liguowang/cpat/master/prebuilt_models/Human_Hexamer.tsv
+  #   cpat_logit:       databases/Human_logitModel.RData
+  #   cpat_logit_url:   https://raw.githubusercontent.com/liguowang/cpat/master/prebuilt_models/Human_logitModel.RData
+  # (for plants, supply a plant-retrained hexamer/logit pair and set the cutoff to 0.46).
+  # PLANT model ships with LncKit (databases/Plant_Hexamer.tsv + Plant.logit.RData),
+  # so 'organism: plant' works out of the box. Set these only to override.
+  cpat_hexamer: null
+  cpat_logit: null
+
+# --- Tool selection per stage (swappable backends) --------------------------
+tools:
+  qc: fastp
+  trim: fastp
+  aligner: hisat2        # splice-aware; required by StringTie/Cufflinks
+  assembler: stringtie
+  compare: gffcompare
+  # How to pick lncRNA CANDIDATES from the assembly. DEFAULT = feelnc:
+  #   feelnc  -> FEELnc_filter.pl (-s length + --monoex + removal of mRNA-overlapping
+  #              transcripts) in one step (replaces the built-in length/exon/novelty steps).
+  #   builtin -> gffcompare-novelty + filter_length (>=200) + filter_exon.
+  # feelnc needs the lnckit_feelnc env + reference GTF; if unavailable it auto-falls back
+  # to the built-in filters (with a warning), so a run never fails because of this.
+  candidate_filter: feelnc
+  # Default ensemble; combined by majority vote (see coding_potential.consensus). Any tool
+  # that can't run is skipped, not fatal (e.g. CPAT without a model). Pfam is NOT a coding
+  # backend here - it is handled as a diamond BLASTX homology database (see reference below),
+  # not hmmscan; add Pfam-A.fasta to reference.protein_db to use it.
+  coding_potential: [cpat, cpc2, cnci, plek, lncfinder, rnaplonc]
+  protein_filter: diamond
+  housekeeping: infernal
+  classifier: feelnc
+
+# --- Resources --------------------------------------------------------------
+resources:
+  threads: 8
+  memory_gb: 32
+
+# --- Filtering thresholds ---------------------------------------------------
+filters:
+  min_transcript_length: 200     # canonical lncRNA length floor (nt)
+  min_exon_number: 1             # 1 keeps mono-exonic; 2 = multi-exon only
+  # Expression filter - DISABLED by default (both thresholds null -> the step is skipped).
+  # lncRNA identification is defined by structure + coding potential, not abundance, and an
+  # expression cutoff would drop genuine tissue-/condition-specific lncRNAs. To turn it ON,
+  # set min_expression_fpkm (e.g. 1 for the "FPKM >= 1" rule) or min_expression_tpm.
+  # min_expression_fpkm takes precedence; both come from StringTie's -e output.
+  min_expression_fpkm: 1         # keep transcripts with FPKM >= 1 (from StringTie -e)
+  min_expression_tpm: null       # null = no TPM filter  (used only if fpkm is null)
+  min_expressed_samples: 1       # ...in at least this many samples (only when enabled).
+                                 # lncRNAs are tissue-specific, so the test is per sample.
+  keep_classes: [u, x, i, o]     # gffcompare class codes treated as novel/candidate
+                                 # u=intergenic x=antisense i=intronic o=sense-overlap
+
+  # ---- ORF-based filtering -------------------------------------------------
+  # ENABLED: a model-independent long-ORF removal (getorf) on top of the coding-potential
+  # ensemble. A transcript is treated as putative coding (and removed) if its longest ORF
+  # exceeds the ceilings below. Set enabled: false to skip it.
+  orf:
+    enabled: true
+    tool: getorf                 # getorf | transdecoder | orffinder
+    max_orf_length_nt: 300       # longest-ORF ceiling in nucleotides (~100 aa)
+    max_orf_length_aa: 100       # equivalent amino-acid ceiling
+    max_orf_coverage: 0.60       # ORF length / transcript length must be <= this
+    min_transcript_for_orf: 200  # only apply ORF test to transcripts >= this nt
+    strand: both                 # both | forward
+    genetic_code: 1              # NCBI translation table (1 = standard)
+
+# --- Coding-potential thresholds (backend-specific cutoffs) -----------------
+# Backends: cpat | cpc2 | cnci | plek | lncfinder | rnaplonc  (via tools.coding_potential).
+# CPC2 is model-free (works for any organism as-is). CPAT/LncFinder use a per-organism
+# model you supply (see reference.cpat_* / lncfinder.model); CNCI's model is chosen from
+# `organism` (pl for plants, ve otherwise) unless you set cnci.model explicitly.
+coding_potential:
+  # How to combine an ENSEMBLE (a list of tools) into one non-coding call:
+  #   all       -> unanimous: keep only if EVERY tool called it non-coding (strictest)
+  #   majority  -> keep if a strict majority (> half) called it non-coding, so one
+  #                dissenting tool cannot veto (e.g. 5 of 6 non-coding still keeps it)
+  #   <integer> -> keep if at least N tools called it non-coding
+  # Ignored when a single tool is used.
+  consensus: majority
+  cpat:
+    # null -> use the per-organism cutoff chosen automatically from `organism`
+    # (human 0.364, mouse 0.44, fly 0.39, zebrafish 0.381, plant 0.46). Put a NUMBER
+    # here only to FORCE one cutoff for every organism (overrides the per-organism default).
+    coding_cutoff: null
+    # Optional extra ORF-length gate inside CPAT (keep only ORF <= this nt in ADDITION to
+    # coding_prob < cutoff). DISABLED (null) - the dedicated getorf ORF filter above handles
+    # ORF-length removal instead, so CPAT uses coding_prob only. Set a number to re-enable.
+    max_orf_size: null           # null = coding_prob only (getorf does the ORF gate)
+  cpc2: {}
+  cnci:
+    model: null                  # null -> from `organism` (pl/ve); or set "pl"/"ve"
+  lncfinder:
+    # Model is chosen from `organism`: plant -> bundled plant SVM model + make_frequencies;
+    # any other organism -> LncFinder's built-in model. Set model/frequencies to override
+    # with your OWN trained model (any organism). CPAT covers plant/human/mouse/fly/zebrafish.
+    model: null                  # path to a model trained on your organism (null -> auto by organism)
+    frequencies: null            # path/"make:mRNA.fa,lncRNA.fa" (null -> auto)
+
+# --- Protein homology filter ------------------------------------------------
+# A transcript is coding if it hits a known protein with percent identity >= min_pident
+# AND e-value <= evalue -> removed from the lncRNA set. Default min_pident=60 matches the
+# published SwissProt/UniProt recipe (keep only transcripts with NO >=60% protein hit).
+# Lower it (e.g. 30) to also remove distant/weaker protein matches (more aggressive).
+protein_homology:
+  evalue: 1.0e-5
+  min_pident: 60         # percent identity (the discriminating criterion)
+  min_bitscore: 0        # optional extra gate; 0 = off
+
+# --- Housekeeping ncRNA removal ---------------------------------------------
+# The step Plant-LncPipe omits. rRNA/tRNA/snRNA/snoRNA/miRNA precursors are
+# genuinely non-coding, so they sail through the coding-potential and protein
+# filters; only an Rfam search removes them. Without this, the output is
+# "non-coding RNA", not "long non-coding RNA".
+housekeeping:
+  infernal_evalue: 1.0e-5
+  use_rfam_gathering_threshold: true   # --cut_ga: Rfam's own curated per-family cutoff
+                                       # (mutually exclusive with -E; ignore evalue when true)
+  remove_biotypes: [rRNA, tRNA, snRNA, snoRNA, miRNA, srpRNA, rnasep, tmRNA]
+  remove_all_hits: false               # true = drop EVERY Rfam hit, not just these biotypes
+  keep_families: []                    # Rfam families to protect (it curates lncRNAs too)
+  clanin: null                         # optional Rfam.clanin -> mark redundant clan hits
+
+# --- Per-tool extra parameters (free-form, passed straight to the wrapper) --
+tool_params:
+  fastp: {}
+  hisat2: {}
+  star: {}
+  stringtie: {}
+  diamond: {}
+  trimmomatic:
+    # adapters: /path/to/Trimmomatic/adapters/TruSeq3-PE.fa   # note: TruSeq, not TrueSeq
+    illuminaclip: "2:30:10"
+    steps: [LEADING:3, TRAILING:3, SLIDINGWINDOW:4:15, MINLEN:36]
+  cutadapt:
+    quality_cutoff: 20
+    min_length: 36
+
+# --- Execution --------------------------------------------------------------
+execution:
+  resume: true
+  keep_intermediate: true
+  dry_run: false
+
+logging:
+  level: INFO

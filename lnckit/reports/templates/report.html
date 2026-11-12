@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>lnckit report</title>
+<style>
+ body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:2rem;color:#1a2b34;}
+ h1{border-bottom:3px solid #2e7d5b;padding-bottom:.3rem;}
+ table{border-collapse:collapse;width:100%;margin:1rem 0;}
+ th,td{border:1px solid #d0d7de;padding:.4rem .6rem;text-align:left;font-size:.9rem;}
+ th{background:#eef6f1;}
+ .num{text-align:right;font-variant-numeric:tabular-nums;}
+ .final{font-size:1.4rem;color:#2e7d5b;font-weight:700;}
+ code{background:#f3f5f7;padding:.1rem .3rem;border-radius:3px;}
+</style></head><body>
+<h1>lnckit - lncRNA identification report</h1>
+<p>lnckit v{{ m.lnckit_version }} | {{ m.platform }} | Python {{ m.python }}</p>
+
+<h2>Final result</h2>
+<p class="final">{{ m.final_counts.get('high_confidence_lncRNA', 'NA') }} high-confidence lncRNAs</p>
+
+<h2>Transcripts retained per step</h2>
+<table><tr><th>Step</th><th>Tool</th><th class="num">In</th><th class="num">Out</th><th class="num">Runtime (s)</th></tr>
+{% for s in m.steps %}
+<tr><td>{{ s.name }}</td><td>{{ s.tool }}</td>
+<td class="num">{{ s.transcripts_in if s.transcripts_in>=0 else '' }}</td>
+<td class="num">{{ s.transcripts_out if s.transcripts_out>=0 else '' }}</td>
+<td class="num">{{ '%.1f'|format(s.runtime_seconds) }}</td></tr>
+{% endfor %}
+</table>
+
+<h2>Software versions</h2>
+<table><tr><th>Tool</th><th>Version</th></tr>
+{% for k,v in m.tool_versions.items() %}<tr><td>{{k}}</td><td>{{v}}</td></tr>{% endfor %}
+</table>
+
+<h2>Configuration</h2>
+<pre><code>{{ config_yaml }}</code></pre>
+</body></html>

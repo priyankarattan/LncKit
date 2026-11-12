@@ -1,0 +1,10 @@
+# Declarative compatibility matrix consumed by core.config.validate().
+# Kept as data so new rules do not require touching Python.
+requires_splice_aware:
+  assemblers: [stringtie, cufflinks]
+  aligners:   [hisat2, star]
+
+recommends:
+  star:
+    min_memory_gb: 30
+    note: "STAR needs a large genome index in RAM; prefer HISAT2 on small nodes."
